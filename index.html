@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SHIELD DZ - الماسح الذكي</title>
+    <link href="https://fonts.googleapis.com/css2?family=Tajawal:wght@400;700;900&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.1/firebase-database-compat.js"></script>
+    
+    <style>
+        :root { --bg: #020617; --primary: #10b981; --glass: rgba(15, 23, 42, 0.8); }
+        body { font-family: 'Tajawal', sans-serif; background: var(--bg); background-image: radial-gradient(circle at 50% 0%, #1e293b 0%, var(--bg) 100%); color: white; margin: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; overflow: hidden; }
+        
+        .scanner-box { position: relative; width: 90%; max-width: 400px; background: var(--glass); padding: 20px; border-radius: 20px; border: 1px solid rgba(16, 185, 129, 0.4); box-shadow: 0 0 40px rgba(16, 185, 129, 0.2); backdrop-filter: blur(10px); }
+        .header { text-align: center; margin-bottom: 20px; }
+        .header h2 { color: var(--primary); margin: 0; letter-spacing: 3px; font-size: 2rem;}
+        
+        /* إطار الكاميرا وتأثير الليزر */
+        .camera-container { position: relative; border-radius: 15px; overflow: hidden; border: 2px solid var(--primary); }
+        #reader { width: 100%; }
+        .laser-line { position: absolute; top: 0; left: 0; width: 100%; height: 3px; background: var(--primary); box-shadow: 0 0 15px var(--primary), 0 0 30px var(--primary); animation: scan 2s linear infinite; z-index: 10; pointer-events: none; }
+        
+        @keyframes scan { 0% { top: 0; opacity: 0; } 10% { opacity: 1; } 90% { opacity: 1; } 100% { top: 100%; opacity: 0; } }
+
+        /* نافذة النتيجة العائمة */
+        .result-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.9); display: none; flex-direction: column; align-items: center; justify-content: center; z-index: 100; backdrop-filter: blur(5px); }
+        .result-card { background: #1e293b; padding: 40px; border-radius: 20px; text-align: center; animation: zoomIn 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275); }
+        .result-card h1 { margin: 10px 0; font-size: 2.5rem; }
+        .result-card p { font-size: 1.5rem; color: #cbd5e1; margin: 0; }
+        
+        .success { border: 4px solid var(--primary); box-shadow: 0 0 50px rgba(16, 185, 129, 0.4); }
+        .success h1 { color: var(--primary); }
+        
+        @keyframes zoomIn { from { transform: scale(0.5); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+    </style>
+</head>
+<body>
+
+    <div class="scanner-box">
+        <div class="header">
+            <h2>SHIELD SCAN</h2>
+            <p style="color: #94a3b8; margin-top: 5px;">توجيه البطاقة نحو الكاميرا</p>
+        </div>
+        <div class="camera-container">
+            <div id="reader"></div>
+            <div class="laser-line"></div>
+        </div>
+    </div>
+
+    <div class="result-overlay" id="overlay">
+        <div class="result-card" id="resultCard">
+            <h1 id="resIcon">✅</h1>
+            <h1 id="resTitle">تم التأكيد</h1>
+            <p id="resName">الاسم</p>
+        </div>
+    </div>
+
+    <script>
+        const firebaseConfig = { apiKey: "AIzaSyCgZgpQHl1aJcbtIe8otscDfA_Plzl7n_c", authDomain: "test-b8f87.firebaseapp.com", databaseURL: "https://test-b8f87-default-rtdb.firebaseio.com", projectId: "test-b8f87", storageBucket: "test-b8f87.firebasestorage.app", messagingSenderId: "199270761575", appId: "1:199270761575:web:fdb307007a678a498680c2" };
+        firebase.initializeApp(firebaseConfig); const db = firebase.database();
+        let isScanning = true;
+
+        const html5QrcodeScanner = new Html5QrcodeScanner("reader", { fps: 15, qrbox: {width: 250, height: 250} }, false);
+
+        function showResult(title, name, isSuccess) {
+            const overlay = document.getElementById('overlay');
+            const card = document.getElementById('resultCard');
+            
+            document.getElementById('resTitle').innerText = title;
+            document.getElementById('resName').innerHTML = name;
+            document.getElementById('resIcon').innerText = isSuccess ? "✅" : "⚠️";
+            
+            card.className = isSuccess ? "result-card success" : "result-card";
+            if(!isSuccess) card.style.borderColor = "#ef4444";
+            
+            overlay.style.display = 'flex';
+            
+            // إخفاء النتيجة بعد 3 ثواني للعودة للمسح
+            setTimeout(() => { overlay.style.display = 'none'; isScanning = true; }, 3000);
+        }
+
+        function onScanSuccess(decodedText) {
+            if (!isScanning) return;
+            isScanning = false;
+            
+            const guestId = decodedText.trim();
+
+            db.ref('shield_guests/' + guestId).once('value').then((snapshot) => {
+                if (snapshot.exists()) {
+                    const data = snapshot.val();
+                    if (data.attended) {
+                        showResult("مسجل مسبقاً!", `<span style="color:#ef4444">${data.name}</span><br><small>تم دخول هذه البطاقة من قبل</small>`, false);
+                    } else {
+                        db.ref('shield_guests/' + guestId).update({ attended: true, time: new Date().toLocaleTimeString('ar-DZ') }).then(() => {
+                            showResult("أهلاً بك", data.name, true);
+                        });
+                    }
+                } else {
+                    showResult("بطاقة غير صالحة", "عذراً، هذا الكود غير مسجل", false);
+                }
+            });
+        }
+        html5QrcodeScanner.render(onScanSuccess, () => {});
+    </script>
+</body>
+</html>
